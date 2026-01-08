@@ -597,7 +597,7 @@ class YTMusicLibraryProvider(backend.LibraryProvider):
         return ret
 
     def search(self, query=None, uris=None, exact=False):
-        results = []
+        results = self.empty_search_result()
         logger.debug("YTMusic searching for %s", query)
         if "any" in query:
             try:
@@ -610,6 +610,7 @@ class YTMusicLibraryProvider(backend.LibraryProvider):
                     'YTMusic search failed for query "any"="%s"',
                     " ".join(query["any"]),
                 )
+                results = self.empty_search_result()
         elif "track_name" in query:
             try:
                 res = self.backend.api.search(
@@ -626,6 +627,7 @@ class YTMusicLibraryProvider(backend.LibraryProvider):
                     'YTMusic search failed for query "title"="%s"',
                     " ".join(query["track_name"]),
                 )
+                results = self.empty_search_result()
         elif "albumartist" in query or "artist" in query:
             q1 = ("albumartist" in query and query["albumartist"]) or []
             q2 = ("artist" in query and query["artist"]) or []
@@ -642,6 +644,7 @@ class YTMusicLibraryProvider(backend.LibraryProvider):
                     'YTMusic search failed for query "artist"="%s"',
                     " ".join(q1 + q2),
                 )
+                results = self.empty_search_result()
         elif "album" in query:
             try:
                 res = self.backend.api.search(
@@ -656,6 +659,7 @@ class YTMusicLibraryProvider(backend.LibraryProvider):
                     'YTMusic search failed for query "album"="%s"',
                     " ".join(query["album"]),
                 )
+                results = self.empty_search_result()
         elif "uri" in query:
             uri = query["uri"][0]
             tracks = []
@@ -697,6 +701,9 @@ class YTMusicLibraryProvider(backend.LibraryProvider):
             )
             return None
         return results
+
+    def empty_search_result(self):
+        return SearchResult(uri="ytmusic:search", tracks=[], artists=[], albums=[])
 
     def addThumbnails(self, bId, data, addTracks=True):
         images = []
@@ -1002,15 +1009,12 @@ class YTMusicLibraryProvider(backend.LibraryProvider):
                 if result["videoId"] in self.TRACKS:
                     tracks.add(self.TRACKS[result["videoId"]])
                 else:
-                    try:
-                        length = [int(i) for i in result["duration"].split(":")]
-                    except ValueError:
-                        length = [0, 0]
+                    length = self._duration_to_ms(result.get("duration"))
                     if result["videoId"] is None:
                         continue
                     if result["videoId"] not in self.TRACKS:
                         artists = []
-                        for a in result["artists"]:
+                        for a in result.get("artists", []):
                             if a["id"] not in self.ARTISTS:
                                 self.ARTISTS[a["id"]] = Artist(
                                     uri=f"ytmusic:artist:{a['id']}",
@@ -1043,7 +1047,7 @@ class YTMusicLibraryProvider(backend.LibraryProvider):
                             track_no=None,
                             disc_no=None,
                             date="0000",
-                            length=(length[0] * 60 * 1000) + (length[1] * 1000),
+                            length=length,
                             bitrate=0,
                             comment="",
                             musicbrainz_id="",
@@ -1089,107 +1093,93 @@ class YTMusicLibraryProvider(backend.LibraryProvider):
                     continue
                 try:
                     artistq = self.backend.api.get_artist(result["browseId"])
-                    if result["browseId"] not in self.ARTISTS:
-                        self.ARTISTS[result["browseId"]] = Artist(
-                            uri=f"ytmusic:artist:{result['browseId']}",
-                            name=artistq["name"],
-                            sortname=artistq["name"],
-                            musicbrainz_id="",
-                        )
-                    sartists.add(self.ARTISTS[result["browseId"]])
-                    if "albums" in artistq:
-                        if "params" in artistq["albums"]:
-                            albums = self.backend.api.get_artist_albums(
-                                artistq["channelId"],
-                                artistq["albums"]["params"],
-                            )
-                            for album in albums:
-                                if album["browseId"] not in self.ALBUMS:
-                                    self.ALBUMS[album["browseId"]] = Album(
-                                        uri=f"ytmusic:album:{album['browseId']}",
-                                        name=album["title"],
-                                        artists=[
-                                            self.ARTISTS[result["browseId"]]
-                                        ],
-                                        date=album["year"],
-                                        musicbrainz_id="",
-                                    )
-                                salbums.add(self.ALBUMS[album["browseId"]])
-                        elif "results" in artistq["albums"]:
-                            for album in artistq["albums"]["results"]:
-                                if album["browseId"] not in self.ALBUMS:
-                                    self.ALBUMS[album["browseId"]] = Album(
-                                        uri=f"ytmusic:album:{album['browseId']}",
-                                        name=album["title"],
-                                        artists=[
-                                            self.ARTISTS[result["browseId"]]
-                                        ],
-                                        date=album["year"],
-                                        musicbrainz_id="",
-                                    )
-                                salbums.add(self.ALBUMS[album["browseId"]])
-                    if "singles" in artistq and "results" in artistq["singles"]:
-                        for single in artistq["singles"]["results"]:
-                            if single["browseId"] not in self.ALBUMS:
-                                self.ALBUMS[single["browseId"]] = Album(
-                                    uri=f"ytmusic:album:{single['browseId']}",
-                                    name=single["title"],
-                                    artists=[self.ARTISTS[result["browseId"]]],
-                                    date=single["year"],
-                                    musicbrainz_id="",
-                                )
-                            salbums.add(self.ALBUMS[single["browseId"]])
-                    if "songs" in artistq:
-                        if "results" in artistq["songs"]:
-                            for song in artistq["songs"]["results"]:
-                                if song["videoId"] in self.TRACKS:
-                                    tracks.add(self.TRACKS[song["videoId"]])
-                                else:
-                                    album = None
-                                    if "album" in song:
-                                        if (
-                                            song["album"]["id"]
-                                            not in self.ALBUMS
-                                        ):
-                                            self.ALBUMS[
-                                                song["album"]["id"]
-                                            ] = Album(
-                                                uri=f"ytmusic:album:{song['album']['id']}",
-                                                name=song["album"]["name"],
-                                                artists=[
-                                                    self.ARTISTS[
-                                                        result["browseId"]
-                                                    ]
-                                                ],
-                                                date="1999",
-                                                musicbrainz_id="",
-                                            )
-                                        album = self.ALBUMS[song["album"]["id"]]
-                                    if song["videoId"] not in self.TRACKS:
-                                        self.TRACKS[song["videoId"]] = Track(
-                                            uri=f"ytmusic:track:{song['videoId']}",
-                                            name=song["title"],
-                                            artists=[
-                                                self.ARTISTS[result["browseId"]]
-                                            ],
-                                            album=album,
-                                            composers=[],
-                                            performers=[],
-                                            genre="",
-                                            track_no=None,
-                                            disc_no=None,
-                                            date="0000",
-                                            length=None,
-                                            bitrate=0,
-                                            comment="",
-                                            musicbrainz_id="",
-                                            last_modified=None,
-                                        )
-                                    tracks.add(self.TRACKS[song["videoId"]])
                 except Exception:
                     logger.exception(
-                        "YTMusic failed parsing artist %s", result["artist"]
+                        "YTMusic failed parsing artist %s", result.get("artist")
                     )
+                    continue
+
+                if result["browseId"] not in self.ARTISTS:
+                    self.ARTISTS[result["browseId"]] = Artist(
+                        uri=f"ytmusic:artist:{result['browseId']}",
+                        name=artistq.get("name", result.get("artist", "")),
+                        sortname=artistq.get("name", result.get("artist", "")),
+                        musicbrainz_id="",
+                    )
+                sartists.add(self.ARTISTS[result["browseId"]])
+                if "albums" in artistq:
+                    if "params" in artistq["albums"]:
+                        albums = self.backend.api.get_artist_albums(
+                            artistq.get("channelId"),
+                            artistq["albums"].get("params"),
+                        )
+                        for album in albums:
+                            if album["browseId"] not in self.ALBUMS:
+                                self.ALBUMS[album["browseId"]] = Album(
+                                    uri=f"ytmusic:album:{album['browseId']}",
+                                    name=album["title"],
+                                    artists=[self.ARTISTS[result["browseId"]]],
+                                    date=album.get("year", "0000"),
+                                    musicbrainz_id="",
+                                )
+                            salbums.add(self.ALBUMS[album["browseId"]])
+                    elif "results" in artistq["albums"]:
+                        for album in artistq["albums"]["results"]:
+                            if album["browseId"] not in self.ALBUMS:
+                                self.ALBUMS[album["browseId"]] = Album(
+                                    uri=f"ytmusic:album:{album['browseId']}",
+                                    name=album["title"],
+                                    artists=[self.ARTISTS[result["browseId"]]],
+                                    date=album.get("year", "0000"),
+                                    musicbrainz_id="",
+                                )
+                            salbums.add(self.ALBUMS[album["browseId"]])
+                if "singles" in artistq and "results" in artistq["singles"]:
+                    for single in artistq["singles"]["results"]:
+                        if single["browseId"] not in self.ALBUMS:
+                            self.ALBUMS[single["browseId"]] = Album(
+                                uri=f"ytmusic:album:{single['browseId']}",
+                                name=single["title"],
+                                artists=[self.ARTISTS[result["browseId"]]],
+                                date=single.get("year", "0000"),
+                                musicbrainz_id="",
+                            )
+                        salbums.add(self.ALBUMS[single["browseId"]])
+                if "songs" in artistq and "results" in artistq["songs"]:
+                    for song in artistq["songs"]["results"]:
+                        if song["videoId"] in self.TRACKS:
+                            tracks.add(self.TRACKS[song["videoId"]])
+                        else:
+                            album = None
+                            if "album" in song:
+                                if song["album"]["id"] not in self.ALBUMS:
+                                    self.ALBUMS[song["album"]["id"]] = Album(
+                                        uri=f"ytmusic:album:{song['album']['id']}",
+                                        name=song["album"].get("name", ""),
+                                        artists=[self.ARTISTS[result["browseId"]]],
+                                        date="1999",
+                                        musicbrainz_id="",
+                                    )
+                                album = self.ALBUMS[song["album"]["id"]]
+                            if song["videoId"] not in self.TRACKS:
+                                self.TRACKS[song["videoId"]] = Track(
+                                    uri=f"ytmusic:track:{song['videoId']}",
+                                    name=song.get("title", ""),
+                                    artists=[self.ARTISTS[result["browseId"]]],
+                                    album=album,
+                                    composers=[],
+                                    performers=[],
+                                    genre="",
+                                    track_no=None,
+                                    disc_no=None,
+                                    date="0000",
+                                    length=self._duration_to_ms(song.get("duration")),
+                                    bitrate=0,
+                                    comment="",
+                                    musicbrainz_id="",
+                                    last_modified=None,
+                                )
+                            tracks.add(self.TRACKS[song["videoId"]])
         tracks = list(tracks)
         for track in tracks:
             bId, _ = parse_uri(track.uri)
@@ -1204,6 +1194,19 @@ class YTMusicLibraryProvider(backend.LibraryProvider):
             artists=list(sartists),
             albums=list(salbums),
         )
+
+    def _duration_to_ms(self, duration):
+        if not duration:
+            return 0
+        try:
+            parts = [int(i) for i in duration.split(":")]
+        except Exception:
+            return 0
+        if len(parts) == 2:
+            return (parts[0] * 60 * 1000) + (parts[1] * 1000)
+        if len(parts) == 3:
+            return (parts[0] * 3600 * 1000) + (parts[1] * 60 * 1000) + (parts[2] * 1000)
+        return 0
 
 
 def parse_uri(uri):

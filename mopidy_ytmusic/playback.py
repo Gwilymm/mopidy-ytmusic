@@ -18,17 +18,33 @@ class YTMusicPlaybackProvider(backend.PlaybackProvider):
 
     def update_cipher(self, playerurl):
         self.Youtube_Player_URL = playerurl
-        response = requests.get("https://music.youtube.com" + playerurl)
-        m = re.search(r"signatureTimestamp[:=](\d+)", response.text)
-        if m:
+        try:
+            response = requests.get("https://music.youtube.com" + playerurl)
+            m = re.search(r"signatureTimestamp[:=](\d+)", response.text)
+            if not m:
+                logger.error("YTMusic unable to extract signatureTimestamp.")
+                self.PyTubeCipher = None
+                self.signatureTimestamp = None
+                return None
+
             self.signatureTimestamp = m.group(1)
-            self.PyTubeCipher = Cipher(js=response.text)
+            try:
+                self.PyTubeCipher = Cipher(js=response.text)
+            except Exception:
+                # Player JS layout changed; wait for next refresh instead of crashing the timer thread.
+                logger.exception("YTMusic failed to build PyTube cipher; will retry on next refresh")
+                self.PyTubeCipher = None
+                self.signatureTimestamp = None
+                return None
+
             logger.debug(
                 "YTMusic updated signatureTimestamp to %s",
                 self.signatureTimestamp,
             )
-        else:
-            logger.error("YTMusic unable to extract signatureTimestamp.")
+        except Exception:
+            logger.exception("YTMusic failed to refresh player cipher")
+            self.PyTubeCipher = None
+            self.signatureTimestamp = None
             return None
 
     def change_track(self, track):
@@ -54,6 +70,10 @@ class YTMusicPlaybackProvider(backend.PlaybackProvider):
         logger.debug('YTMusic PlaybackProvider.translate_uri "%s"', uri)
 
         if "ytmusic:track:" not in uri:
+            return None
+
+        if self.PyTubeCipher is None or self.signatureTimestamp is None:
+            logger.error("YTMusic cipher not ready; skipping translate_uri")
             return None
 
         try:
