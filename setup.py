@@ -18,7 +18,7 @@ entry_points = {"mopidy.ext": ["ytmusic = mopidy_ytmusic:Extension"]}
 
 setup(
     name="mopidy-ytmusic",
-    version="0.3.9",
+    version="0.3.91",
     description="Mopidy extension for playing music/managing playlists in YouTube Music",
     packages=packages,
     package_data=package_data,
